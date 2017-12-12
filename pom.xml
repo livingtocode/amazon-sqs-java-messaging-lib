@@ -6,7 +6,7 @@
 
   <groupId>com.amazonaws</groupId>
   <artifactId>amazon-sqs-java-messaging-lib</artifactId>
-  <version>1.0.4</version>
+  <version>1.0.4-delayable7</version>
   <packaging>jar</packaging>
   <name>Amazon SQS Java Messaging Library</name>
   <description>The Amazon SQS Java Messaging Library holds the Java Message Service compatible classes, that are used
@@ -38,7 +38,7 @@
   </developers>
 
   <properties>
-    <aws-java-sdk.version>1.11.106</aws-java-sdk.version>
+    <aws-java-sdk.version>1.11.241</aws-java-sdk.version>
   </properties>
 
   <dependencies>
@@ -75,8 +75,8 @@
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.2</version>
           <configuration>
-            <source>1.7</source>
-            <target>1.7</target>
+            <source>1.8</source>
+            <target>1.8</target>
             <encoding>UTF-8</encoding>
           </configuration>
         </plugin>

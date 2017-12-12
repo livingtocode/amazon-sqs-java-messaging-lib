@@ -42,6 +42,8 @@ import com.amazonaws.services.sqs.model.SendMessageRequest;
 import com.amazonaws.services.sqs.model.SendMessageResult;
 import com.amazonaws.util.Base64;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+
 /**
  * A client uses a MessageProducer object to send messages to a queue
  * destination. A MessageProducer object is created by passing a Destination
@@ -130,9 +132,16 @@ public class SQSMessageProducer implements MessageProducer, QueueSender {
             sendMessageRequest.setMessageDeduplicationId(message.getSQSMessageDeduplicationId());
         }
 
+        if (message.propertyExists("MMRedeliveryCount")) {
+          long delayedMillis = message.getLongProperty("MMRedeliveryCount");
+          if (delayedMillis > 0) {
+            sendMessageRequest.setDelaySeconds(((Long) MILLISECONDS.toSeconds(delayedMillis)).intValue());
+          }
+        }
+
         SendMessageResult sendMessageResult = amazonSQSClient.sendMessage(sendMessageRequest);
         String messageId = sendMessageResult.getMessageId();
-        LOG.info("Message sent to SQS with SQS-assigned messageId: " + messageId);
+        LOG.debug("Message sent to SQS with SQS-assigned messageId: " + messageId);
         /** TODO: Do not support disableMessageID for now. */
         message.setSQSMessageId(messageId);
 

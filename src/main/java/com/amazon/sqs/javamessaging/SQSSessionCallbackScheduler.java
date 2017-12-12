@@ -92,14 +92,14 @@ public class SQSSessionCallbackScheduler implements Runnable {
         try {            
             while (true) {
                 try {
-                    if (closed) {
+                    if (!session.isRunning() || closed) {
                         break;
                     }
                     synchronized (callbackQueue) {
                         callbackEntry = callbackQueue.pollFirst();
                         if (callbackEntry == null) {
                             try {
-                                callbackQueue.wait();
+                                callbackQueue.wait(2000L);
                             } catch (InterruptedException e) {
                                 /**
                                  * Will be retried on the next loop, and

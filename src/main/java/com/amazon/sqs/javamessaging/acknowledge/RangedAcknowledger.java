@@ -18,9 +18,12 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
+import java.util.stream.Collectors;
 
 import javax.jms.JMSException;
 
+import com.amazonaws.services.sqs.model.BatchResultErrorEntry;
+import com.amazonaws.services.sqs.model.DeleteMessageBatchResult;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -41,6 +44,11 @@ import com.amazonaws.services.sqs.model.DeleteMessageBatchRequestEntry;
  * This class is not safe for concurrent use.
  */
 public class RangedAcknowledger extends BulkSQSOperation implements Acknowledger {
+
+    private static final int MAX_ACK_RETRIES = 7;
+
+    private static final int BACK_OFF_MILLIS = 500;
+
     private static final Log LOG = LogFactory.getLog(RangedAcknowledger.class);
     
     private final AmazonSQSMessagingClientWrapper amazonSQSClient;
@@ -67,7 +75,7 @@ public class RangedAcknowledger extends BulkSQSOperation implements Acknowledger
         SQSMessageIdentifier ackMessage = SQSMessageIdentifier.fromSQSMessage(message);
 
         int indexOfMessage = indexOf(ackMessage);
-
+        int totalMessageCount = getUnAckMessages().size();
         /**
          * In case the message has already been deleted, warn user about it and
          * return. If not then then it should continue with acknowledging all
@@ -77,7 +85,14 @@ public class RangedAcknowledger extends BulkSQSOperation implements Acknowledger
             LOG.warn("SQSMessageID: " + message.getSQSMessageId() + " with SQSMessageReceiptHandle: " +
                      message.getReceiptHandle() + " does not exist.");
         } else {
-            bulkAction(getUnAckMessages(), indexOfMessage);
+            try {
+                bulkAction(getUnAckMessages(), indexOfMessage);
+            } catch (Exception e) {
+                LOG.error("Failed to acknowledge message SQSMessageID: " + message.getSQSMessageId() +
+                  " with SQSMessageReceiptHandle: " + message.getReceiptHandle() + " when acknowledging " +
+                  totalMessageCount + " messages", e);
+                throw e;
+            }
         }
     }
 
@@ -148,11 +163,44 @@ public class RangedAcknowledger extends BulkSQSOperation implements Acknowledger
         
         DeleteMessageBatchRequest deleteMessageBatchRequest = new DeleteMessageBatchRequest(
                 queueUrl, deleteMessageBatchRequestEntries);
-        /**
-         * TODO: If one of the batch calls fail, then the remaining messages on
-         * the batch will not be deleted, and will be visible and delivered as
-         * duplicate after visibility timeout expires.
-         */
-        amazonSQSClient.deleteMessageBatch(deleteMessageBatchRequest);
+
+        boolean success = false;
+        int counter = 0;
+        String failures = "";
+        while (!success && counter < MAX_ACK_RETRIES) {
+            counter++;
+            DeleteMessageBatchResult result = amazonSQSClient.deleteMessageBatch(deleteMessageBatchRequest);
+            List<BatchResultErrorEntry> failedHandles = result.getFailed().stream()
+              .filter(entry -> !"ReceiptHandleIsInvalid".equals(entry.getCode())).collect(Collectors.toList());
+            success = (failedHandles.size() == 0);
+            if (!success) {
+                failures = failedHandles.stream()
+                  .map(entry -> entry.getCode() + ": " + entry.getMessage())
+                  .collect(Collectors.joining(","));
+                List<BatchResultErrorEntry> cleanFailures = failedHandles.stream()
+                  .filter(entry -> !"RequestThrottled".equals(entry.getCode()) && !"InternalError".equals(entry.getCode()))
+                  .collect(Collectors.toList());
+                if (cleanFailures.size() > 0) {
+                  LOG.warn("Attempt " + counter + " failed to acknowledge message: " + failures);
+                }
+                deleteMessageBatchRequestEntries.clear();
+                for (BatchResultErrorEntry errorEntry : failedHandles) {
+                    deleteMessageBatchRequestEntries.add(
+                      new DeleteMessageBatchRequestEntry(
+                        errorEntry.getId(), receiptHandles.get(Integer.parseInt(errorEntry.getId()))
+                      )
+                    );
+                }
+                deleteMessageBatchRequest = new DeleteMessageBatchRequest(queueUrl, deleteMessageBatchRequestEntries);
+                try {
+                    Thread.sleep(Math.round(Math.pow(2, counter)) * BACK_OFF_MILLIS);
+                } catch (InterruptedException e) {
+                    throw new JMSException("Interrupted sleeping between acknowledgement attempts! " + e.toString());
+                }
+            }
+        }
+        if (!success) {
+            throw new JMSException("Could not acknowledge messages after " + counter + " attempts: " + failures);
+        }
     }
 }

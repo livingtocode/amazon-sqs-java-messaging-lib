@@ -402,7 +402,11 @@ public class AmazonSQSMessagingClientWrapper {
         String errorMessage = "AmazonServiceException: " + action + ". RequestId: " + ase.getRequestId() +
                               "\nHTTPStatusCode: " + ase.getStatusCode() + " AmazonErrorCode: " +
                               ase.getErrorCode();
-        LOG.error(errorMessage, ase);
+        if ("RequestThrottled".equals(ase.getErrorCode()) || "InternalError".equals(ase.getErrorCode())) {
+            LOG.debug(errorMessage, ase);
+        } else {
+            LOG.error(errorMessage, ase);
+        }
         return errorMessage;
     }
 
